@@ -1,14 +1,29 @@
 chrome.webRequest.onBeforeRequest.addListener(
     function(info) {
+        // If origin is Google Maps then do not change the url
+        if (isGoogleMapsRobust(info)) return;
+
         let url_s = info.url;
         let url = new URL(url_s);
-        let udm= url.searchParams.get("udm");
+        let udm = url.searchParams.get("udm");
         let tbm = url.searchParams.get("tbm");
         //only trigger when we are doing a regular search, so no image video news, etc search
         // normal search has no udm and no tbm set
-        if( (udm == "" || udm == null) && (tbm == "" || tbm == null) ){
-          url.searchParams.set("udm", "14");
-          update_tab(url.href, info.tabId);
+        if ((udm == "" || udm == null) && (tbm == "" || tbm == null)) {
+            // Check Tab URL before replacing
+            if (info.tabId != null && info.tabId >= 0) {
+                chrome.tabs.get(info.tabId, function(tab) {
+                    if (chrome.runtime.lastError || !tab || !tab.url) return;
+                    // Do nothing if on Google Maps
+                    if (tab.url.includes("google.com/maps")) return;
+
+                    url.searchParams.set("udm", "14");
+                    update_tab(url.href, info.tabId);
+                });
+            } else {
+                url.searchParams.set("udm", "14");
+                update_tab(url.href, info.tabId);
+            }
         }
     },
     // filters
@@ -75,20 +90,37 @@ chrome.webRequest.onBeforeRequest.addListener(
     // extraInfoSpec
     ["blocking"]);
 
-    function update_tab(url, tab_id) {
-        browser.runtime.getPlatformInfo().then((info) => {
-            let updateProperties;
-      
-                updateProperties = { url };
-
-            if (tab_id != null) {
-                browser.tabs.update(tab_id, updateProperties);
-            } else {
-                browser.tabs.update(updateProperties);
-            }
+function update_tab(url, tab_id) {
+    browser.runtime.getPlatformInfo().then((info) => {
+        let updateProperties = { url };
+        if (tab_id != null) {
+            browser.tabs.update(tab_id, updateProperties);
+        } else {
+            browser.tabs.update(updateProperties);
         }
+    });
+}
 
-        );
+function isGoogleMapsLite(info) {
+    const urls = [info.originUrl, info.documentUrl].filter(Boolean);
+    return urls.some(u => u.includes("google.com/maps"));
+}
 
-
-    }
+function isGoogleMapsRobust(info) {
+    const urls = [info.originUrl, info.documentUrl].filter(Boolean);
+    return urls.some(u => {
+        try {
+            const parsed = new URL(u);
+            const host = parsed.hostname;
+            const path = parsed.pathname;
+            return (
+                // www.google.*/maps/*
+                (/^(www\.)?google\..+$/.test(host) && path.startsWith("/maps")) ||
+                // maps.google.*
+                /^maps\.google\..+$/.test(host)
+            );
+        } catch {
+            return false;
+        }
+    });
+}
